@@ -1,0 +1,107 @@
+#pragma kernel Greyscale
+#pragma kernel HorizSobel
+#pragma kernel VertSobel
+#pragma kernel CombSobel
+#pragma kernel Threshold
+#pragma kernel ThresholdFuzzy
+#pragma kernel Outline
+#pragma kernel NormaliseHorizSobel
+#pragma kernel NormaliseVertSobel
+
+// The original input texture.
+Texture2D<float4> inputTexture;
+// RenderTexture's which will contain the output.
+RWTexture2D<float4> greyscaleTexture;
+RWTexture2D<float4> horizSobelTexture;
+RWTexture2D<float4> horizSobelNormalised;
+RWTexture2D<float4> vertSobelTexture;
+RWTexture2D<float4> vertSobelNormalised;
+RWTexture2D<float4> combSobelTexture;
+RWTexture2D<float4> thresholdTexture;
+RWTexture2D<float4> outlineTexture;
+// Two variable parameters.
+float threshold;
+float4 lineColour;
+
+[numthreads(8, 8, 1)]
+void Greyscale(uint3 id : SV_DispatchThreadID) {
+    float average = (inputTexture[id.xy].r + inputTexture[id.xy].g + inputTexture[id.xy].b) / 3;
+    greyscaleTexture[id.xy] = float4(average, average, average, inputTexture[id.xy].a);
+}
+
+[numthreads(8, 8, 1)]
+void HorizSobel(uint3 id : SV_DispatchThreadID) {
+    float4 pixel = float4(0, 0, 0, 0);
+    // Convolution:
+    //  1  2  1
+    //  0  0  0
+    // -1 -2 -1
+    pixel += 1 * greyscaleTexture[id.xy - int2(-1, 1)];
+    pixel += 2 * greyscaleTexture[id.xy - int2(0, 1)];
+    pixel += 1 * greyscaleTexture[id.xy - int2(1, 1)];
+
+    pixel -= 1 * greyscaleTexture[id.xy - int2(-1, -1)];
+    pixel -= 2 * greyscaleTexture[id.xy - int2(0, -1)];
+    pixel -= 1 * greyscaleTexture[id.xy - int2(1, -1)];
+    // Retain the original pixel alpha value.
+    pixel.a = greyscaleTexture[id.xy].a;
+    // Set the calculate pixel
+    horizSobelTexture[id.xy] = pixel;
+}
+
+[numthreads(8, 8, 1)]
+void VertSobel(uint3 id : SV_DispatchThreadID) {
+    float4 pixel = float4(0, 0, 0, 0);
+    // Convolution:
+    //  1  0 -1
+    //  2  0 -2
+    //  1  0 -1
+    pixel += 1 * greyscaleTexture[id.xy - int2(-1, 1)];
+    pixel -= 1 * greyscaleTexture[id.xy - int2(1, 1)];
+
+    pixel += 2 * greyscaleTexture[id.xy - int2(-1, 0)];
+    pixel -= 2 * greyscaleTexture[id.xy - int2(1, 0)];
+
+    pixel += 1 * greyscaleTexture[id.xy - int2(-1, -1)];
+    pixel -= 1 * greyscaleTexture[id.xy - int2(1, -1)];
+    // Retain the original pixel alpha value.
+    pixel.a = greyscaleTexture[id.xy].a;
+    // Set the calculate pixel
+    vertSobelTexture[id.xy] = pixel;
+}
+
+// Two extra kernels so Unity displays the intermediate sobels correctly,
+// these aren't needed for the final edge detection.
+[numthreads(8, 8, 1)]
+void NormaliseHorizSobel(uint3 id : SV_DispatchThreadID) {
+    horizSobelNormalised[id.xy] = (horizSobelTexture[id.xy] + 1) / 2;
+}
+
+[numthreads(8, 8, 1)]
+void NormaliseVertSobel(uint3 id : SV_DispatchThreadID) {
+    vertSobelNormalised[id.xy] = (vertSobelTexture[id.xy] + 1) / 2;
+}
+
+[numthreads(8, 8, 1)]
+void CombSobel(uint3 id : SV_DispatchThreadID) {
+    // The magnitude
+    combSobelTexture[id.xy] = sqrt(horizSobelTexture[id.xy] * horizSobelTexture[id.xy] + vertSobelTexture[id.xy] * vertSobelTexture[id.xy]);
+}
+
+[numthreads(8, 8, 1)]
+void ThresholdFuzzy(uint3 id : SV_DispatchThreadID) {
+    // This takes an absolute threshold limit.
+    thresholdTexture[id.xy] = step(float4(threshold, threshold, threshold, 0), combSobelTexture[id.xy]) * combSobelTexture[id.xy];
+}
+
+[numthreads(8, 8, 1)]
+void Threshold(uint3 id : SV_DispatchThreadID) {
+    // This takes an absolute threshold limit.
+    thresholdTexture[id.xy] = step(float4(threshold, threshold, threshold, 0), combSobelTexture[id.xy]);
+}
+
+[numthreads(8, 8, 1)]
+void Outline(uint3 id : SV_DispatchThreadID) {
+    // Apply the outline to the original image.
+    outlineTexture[id.xy] = thresholdTexture[id.xy].r > 0 ? lineColour * thresholdTexture[id.xy] : inputTexture[id.xy];
+}
